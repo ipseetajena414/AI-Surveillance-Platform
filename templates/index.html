@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Multi-Model AI Surveillance & Red Zone ID Tracking Platform with real-time breach logs.">
+    <title>AI Surveillance & Red Zone ID Tracking</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+        <div class="header-left">
+            <div class="header-logo">📹</div>
+            <div>
+                <div class="header-title">AI Surveillance & Red Zone Tracker</div>
+                <div class="header-subtitle">Real-Time Object ID Tracking &bull; YOLOv8 &amp; DETR</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="header-stats">
+                <span class="hstat"><span class="hstat-val" id="stat-fps">0.0</span> FPS</span>
+                <span class="hstat"><span class="hstat-val" id="stat-latency">0.0</span> ms</span>
+                <span class="hstat"><span class="hstat-val" id="stat-cpu">0.0</span>% CPU</span>
+            </div>
+            <div class="status-badge live" id="status-badge">
+                <span class="status-dot"></span>
+                <span id="active-model-tag">YOLOv8 (CNN)</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ===== MAIN LAYOUT ===== -->
+    <div class="main-layout">
+
+        <!-- === LEFT: Video + Controls === -->
+        <div class="video-section">
+            <div class="video-container" id="video-container">
+                <div class="video-overlay-top">
+                    <span class="video-label" id="feed-label">📷 Live Stream</span>
+                    <span class="video-time" id="feed-time"></span>
+                </div>
+                <img id="video-feed" src="/video_feed" alt="Live surveillance feed">
+                <canvas id="roi-canvas"></canvas>
+            </div>
+
+            <!-- Compact Control Bar -->
+            <div class="control-bar">
+                <div class="control-left">
+                    <button class="btn btn-primary" id="btn-lock-roi" onclick="lockROI()">🔒 Create Red Zone</button>
+                    <button class="btn btn-danger" id="btn-clear-roi" onclick="clearROI()">🗑️ Clear Zone</button>
+                    <button class="btn" id="btn-undo-roi" onclick="undoROI()">↩️ Undo Node</button>
+                </div>
+                <div class="control-right">
+                    <div class="roi-info">
+                        <span class="roi-label">Nodes:</span>
+                        <span class="roi-count" id="roi-count">0</span>
+                    </div>
+                    <div class="breach-stat">
+                        <span class="breach-icon">🚨</span>
+                        <span class="breach-val" id="stat-total-breaches">0</span>
+                        <span class="breach-label">breaches</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- === RIGHT: Sidebar === -->
+        <div class="sidebar">
+
+            <!-- Breach Registry (primary panel — fills space) -->
+            <div class="panel panel-breach">
+                <div class="panel-header">
+                    <span class="panel-title">🚨 Red Zone Breach Log</span>
+                    <div class="panel-actions">
+                        <span class="breach-count" id="breach-count-badge">0</span>
+                        <button class="btn-icon" onclick="clearAlerts()" title="Clear all breach logs">✕</button>
+                    </div>
+                </div>
+                <div class="alert-feed" id="breach-history-feed">
+                    <div class="no-alerts">
+                        <div class="no-alerts-icon">🛡️</div>
+                        <div>No breaches recorded yet</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings (collapsible single panel) -->
+            <div class="panel">
+                <div class="panel-header panel-toggle" onclick="togglePanel(this)">
+                    <span class="panel-title">⚙️ Settings</span>
+                    <span class="panel-chevron">▼</span>
+                </div>
+                <div class="panel-body panel-collapsible">
+                    <div class="config-row">
+                        <span class="config-label">Model</span>
+                        <select class="config-select" id="model-architecture" onchange="switchModelArchitecture()">
+                            <option value="yolov8n.pt">YOLOv8 (CNN)</option>
+                            <option value="facebook/detr-resnet-50">DETR (Transformer)</option>
+                        </select>
+                    </div>
+                    <div class="config-row">
+                        <span class="config-label">Input Source</span>
+                        <select class="config-select" id="input-mode-select" onchange="handleInputModeChange()">
+                            <option value="webcam">🎥 Webcam</option>
+                            <option value="file">🎞️ Upload File</option>
+                        </select>
+                    </div>
+                    <div id="file-upload-section" style="display: none; padding: 8px 0 4px;">
+                        <input type="file" id="media-file-input" accept="video/*,image/*" style="display: none;" onchange="uploadMediaFile()">
+                        <button class="btn btn-primary btn-sm" style="width: 100%; justify-content: center;" onclick="document.getElementById('media-file-input').click()">
+                            📤 Select & Upload File
+                        </button>
+                        <div id="upload-status" style="font-size: 0.7rem; margin-top: 6px; color: var(--text-muted); text-align: center;"></div>
+                    </div>
+                    <div class="config-row">
+                        <span class="config-label">Crowd Alert Limit</span>
+                        <input type="number" class="config-input" id="crowd-threshold" value="3" min="1" max="50" onchange="updateSecurityConfig()">
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        let roiPoints = [];
+        let roiLocked = false;
+        let lastBreachCount = 0;
+
+        const canvas = document.getElementById('roi-canvas');
+        const ctx = canvas.getContext('2d');
+        const videoFeed = document.getElementById('video-feed');
+        const videoContainer = document.getElementById('video-container');
+
+        // ===== Canvas Resize =====
+        function resizeCanvas() {
+            canvas.width = videoFeed.clientWidth;
+            canvas.height = videoFeed.clientHeight;
+            drawROI();
+        }
+
+        videoFeed.addEventListener('load', resizeCanvas);
+        window.addEventListener('resize', resizeCanvas);
+        setTimeout(resizeCanvas, 500);
+
+        // ===== ROI Drawing on Canvas =====
+        canvas.addEventListener('click', function(e) {
+            if (roiLocked) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = (videoFeed.naturalWidth || canvas.width) / canvas.width;
+            const scaleY = (videoFeed.naturalHeight || canvas.height) / canvas.height;
+
+            const canvasX = e.clientX - rect.left;
+            const canvasY = e.clientY - rect.top;
+
+            const realX = Math.round(canvasX * scaleX);
+            const realY = Math.round(canvasY * scaleY);
+
+            roiPoints.push({ canvasX, canvasY, realX, realY });
+            drawROI();
+            updateROICount();
+        });
+
+        function drawROI() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (roiPoints.length === 0 || roiLocked) return;
+
+            const scaleX = canvas.width / (videoFeed.naturalWidth || canvas.width);
+            const scaleY = canvas.height / (videoFeed.naturalHeight || canvas.height);
+
+            // Fill polygon preview
+            if (roiPoints.length > 2) {
+                ctx.beginPath();
+                ctx.moveTo(roiPoints[0].realX * scaleX, roiPoints[0].realY * scaleY);
+                for (let i = 1; i < roiPoints.length; i++) {
+                    ctx.lineTo(roiPoints[i].realX * scaleX, roiPoints[i].realY * scaleY);
+                }
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(99, 102, 241, 0.12)';
+                ctx.fill();
+            }
+
+            // Stroke outline
+            ctx.beginPath();
+            ctx.moveTo(roiPoints[0].realX * scaleX, roiPoints[0].realY * scaleY);
+            for (let i = 1; i < roiPoints.length; i++) {
+                ctx.lineTo(roiPoints[i].realX * scaleX, roiPoints[i].realY * scaleY);
+            }
+            if (roiPoints.length > 2) ctx.closePath();
+            ctx.strokeStyle = '#6366f1';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw nodes
+            roiPoints.forEach((pt, i) => {
+                const px = pt.realX * scaleX;
+                const py = pt.realY * scaleY;
+                ctx.beginPath();
+                ctx.arc(px, py, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#818cf8';
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px JetBrains Mono, monospace';
+                ctx.fillText(`${i + 1}`, px + 7, py - 5);
+            });
+        }
+
+        function updateROICount() {
+            document.getElementById('roi-count').textContent = roiPoints.length;
+        }
+
+        // ===== LOCK ROI — sends to backend, then HIDES canvas overlay so live video feed is active =====
+        function lockROI() {
+            if (roiPoints.length < 3) {
+                alert('Click at least 3 points on the video to form a Red Zone.');
+                return;
+            }
+            roiLocked = true;
+            const points = roiPoints.map(p => [p.realX, p.realY]);
+
+            fetch('/set_roi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ points: points })
+            }).then(r => r.json()).then(data => {
+                // Clear the static canvas drawing & hide canvas layer
+                // The backend now draws the red zone directly onto the live video frames
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                canvas.classList.add('locked');
+            });
+
+            document.getElementById('btn-lock-roi').textContent = '🔒 Zone Active';
+            document.getElementById('btn-lock-roi').disabled = true;
+        }
+
+        // ===== CLEAR ROI — restores canvas for drawing again =====
+        function clearROI() {
+            roiPoints = [];
+            roiLocked = false;
+
+            // Restore canvas interaction
+            canvas.classList.remove('locked');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            fetch('/clear_roi', { method: 'POST' });
+            updateROICount();
+
+            document.getElementById('btn-lock-roi').textContent = '🔒 Create Red Zone';
+            document.getElementById('btn-lock-roi').disabled = false;
+            document.getElementById('breach-history-feed').innerHTML = `
+                <div class="no-alerts">
+                    <div class="no-alerts-icon">🛡️</div>
+                    <div>No breaches recorded yet</div>
+                </div>`;
+            document.getElementById('stat-total-breaches').textContent = '0';
+            document.getElementById('breach-count-badge').textContent = '0';
+            lastBreachCount = 0;
+            videoContainer.classList.remove('alert-active');
+        }
+
+        function undoROI() {
+            if (roiLocked || roiPoints.length === 0) return;
+            roiPoints.pop();
+            drawROI();
+            updateROICount();
+        }
+
+        function clearAlerts() {
+            fetch('/clear_alerts', { method: 'POST' }).then(() => {
+                document.getElementById('breach-history-feed').innerHTML = `
+                    <div class="no-alerts">
+                        <div class="no-alerts-icon">🛡️</div>
+                        <div>No breaches recorded yet</div>
+                    </div>`;
+                document.getElementById('stat-total-breaches').textContent = '0';
+                document.getElementById('breach-count-badge').textContent = '0';
+                lastBreachCount = 0;
+                videoContainer.classList.remove('alert-active');
+            });
+        }
+
+        // ===== Settings Panel Toggle =====
+        function togglePanel(header) {
+            header.classList.toggle('collapsed');
+            const body = header.nextElementSibling;
+            body.classList.toggle('collapsed');
+        }
+
+        // ===== Config Functions =====
+        function switchModelArchitecture() {
+            const selectedModel = document.getElementById('model-architecture').value;
+            fetch('/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: selectedModel })
+            });
+        }
+
+        function updateSecurityConfig() {
+            const threshold = parseInt(document.getElementById('crowd-threshold').value);
+            fetch('/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ crowd_threshold: threshold })
+            });
+        }
+
+        function handleInputModeChange() {
+            const mode = document.getElementById('input-mode-select').value;
+            const uploadSection = document.getElementById('file-upload-section');
+            if (mode === 'file') {
+                uploadSection.style.display = 'block';
+            } else {
+                uploadSection.style.display = 'none';
+                fetch('/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: '0' })
+                });
+                document.getElementById('feed-label').textContent = '📷 Live Stream';
+            }
+        }
+
+        function uploadMediaFile() {
+            const fileInput = document.getElementById('media-file-input');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            const statusDiv = document.getElementById('upload-status');
+            statusDiv.textContent = '⏳ Uploading...';
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    statusDiv.textContent = `✅ ${data.filename}`;
+                    document.getElementById('feed-label').textContent = `🎞️ ${data.filename}`;
+                } else {
+                    statusDiv.textContent = `❌ ${data.message}`;
+                }
+            });
+        }
+
+        // ===== Status Polling =====
+        function pollStatus() {
+            fetch('/status')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('stat-fps').textContent = data.fps.toFixed(1);
+                    document.getElementById('stat-latency').textContent = data.latency_ms.toFixed(0);
+                    document.getElementById('stat-cpu').textContent = data.cpu_percent.toFixed(0);
+                    document.getElementById('stat-total-breaches').textContent = data.total_breaches || 0;
+                    document.getElementById('breach-count-badge').textContent = data.total_breaches || 0;
+                    document.getElementById('active-model-tag').textContent = data.model_type || 'YOLOv8 (CNN)';
+
+                    // Render breach history with vehicle/living ID and exact timestamp
+                    if (data.breach_history && data.breach_history.length > 0) {
+                        if (data.breach_history.length !== lastBreachCount) {
+                            lastBreachCount = data.breach_history.length;
+
+                            let html = '';
+                            [...data.breach_history].reverse().forEach(item => {
+                                const isVehicle = item.category === 'Vehicle';
+                                const icon = isVehicle ? '🚗' : '🧑';
+                                const badgeClass = isVehicle ? 'intrusion' : 'crowd';
+
+                                html += `<div class="alert-item ${badgeClass}">
+                                    <span style="font-size: 1rem;">${icon}</span>
+                                    <div class="alert-msg">
+                                        <strong>${item.id}</strong>
+                                        <span>Crossed Red Zone (${item.category})</span>
+                                    </div>
+                                    <span class="alert-time">${item.time}</span>
+                                </div>`;
+                            });
+                            document.getElementById('breach-history-feed').innerHTML = html;
+                        }
+                    }
+
+                    if (data.intrusion_active || data.crowd_active) {
+                        videoContainer.classList.add('alert-active');
+                    } else {
+                        videoContainer.classList.remove('alert-active');
+                    }
+                });
+        }
+
+        setInterval(pollStatus, 500);
+
+        // Clock
+        function updateClock() {
+            document.getElementById('feed-time').textContent = new Date().toLocaleTimeString('en-US', { hour12: false });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+    </script>
+</body>
+</html>
