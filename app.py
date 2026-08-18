@@ -17,16 +17,20 @@ from surveillance import SurveillanceSystem
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# ===== GLOBAL STATE =====
+# ===== GLOBAL STATE & SYNCHRONIZATION =====
 lock = threading.Lock()
 
 video_source = 0
 cap = None
 surveillance = None
-roi_polygon = []
+camera_running = True
+
+# Frame dimensions cache for client coordinate mapping
+cached_frame_width = 750
+cached_frame_height = 500
 
 frame_stats = {
     'fps': 0.0,
@@ -36,65 +40,138 @@ frame_stats = {
     'living_count': 0,
     'intrusion_active': False,
     'crowd_active': False,
-    'model_type': 'YOLOv8 (CNN)'
+    'model_type': 'YOLOv8 (CNN)',
+    'camera_running': True,
+    'frame_width': 750,
+    'frame_height': 500
 }
 
 
-def init_camera(source):
-    """Initialize or reinitialize video capture source."""
-    global cap
-    if cap is not None:
-        cap.release()
-    src = int(source) if str(source).isdigit() else source
-    cap = cv2.VideoCapture(src)
-    if not cap.isOpened():
-        print(f"[ERROR] Could not open video source: {source}")
-        return False
-    print(f"[OK] Camera / Media Source initialized: {source}")
-    return True
+def init_camera(source=None):
+    """
+    Initialize or reinitialize video capture source.
+    Thread-safe camera initializer.
+    """
+    global cap, video_source, camera_running, cached_frame_width, cached_frame_height
+    with lock:
+        if source is not None:
+            video_source = source
+
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cap = None
+
+        src = int(video_source) if str(video_source).isdigit() else video_source
+        new_cap = cv2.VideoCapture(src)
+
+        if not new_cap.isOpened():
+            print(f"[ERROR] Could not open video source: {video_source}")
+            camera_running = False
+            cap = None
+            return False
+
+        # Query frame dimensions
+        w = int(new_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(new_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if w > 0 and h > 0:
+            cached_frame_width = w
+            cached_frame_height = h
+            frame_stats['frame_width'] = w
+            frame_stats['frame_height'] = h
+
+        cap = new_cap
+        camera_running = True
+        frame_stats['camera_running'] = True
+        print(f"[OK] Camera / Media Source initialized: {video_source} ({cached_frame_width}x{cached_frame_height})")
+        return True
+
+
+def stop_camera():
+    """
+    Explicitly stop camera and release resources cleanly.
+    """
+    global cap, camera_running
+    with lock:
+        camera_running = False
+        frame_stats['camera_running'] = False
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cap = None
+        print("[OK] Camera released and stopped cleanly.")
 
 
 def init_surveillance(model_path='yolov8n.pt', crowd_threshold=3):
     """Initialize the surveillance engine."""
     global surveillance
-    if surveillance is None:
-        surveillance = SurveillanceSystem(model_path=model_path, crowd_threshold=crowd_threshold)
-    else:
-        surveillance.load_model(model_path)
-        surveillance.crowd_threshold = crowd_threshold
-    print(f"[OK] Surveillance initialized ({surveillance.model_type}, threshold={crowd_threshold})")
+    with lock:
+        if surveillance is None:
+            surveillance = SurveillanceSystem(model_path=model_path, crowd_threshold=crowd_threshold)
+        else:
+            surveillance.load_model(model_path)
+            surveillance.crowd_threshold = crowd_threshold
+        print(f"[OK] Surveillance initialized ({surveillance.model_type}, threshold={crowd_threshold})")
 
 
 def generate_frames():
     """MJPEG stream generator yielding annotated video frames."""
-    global cap, surveillance, roi_polygon, frame_stats
+    global cap, surveillance, frame_stats, camera_running, cached_frame_width, cached_frame_height
 
     prev_time = time.time()
 
     while True:
-        if cap is None or not cap.isOpened():
-            placeholder = np.zeros((500, 750, 3), dtype=np.uint8)
-            cv2.putText(placeholder, "No Media Input Feed Active", (180, 250),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (120, 120, 120), 2)
+        with lock:
+            is_running = camera_running
+            active_cap = cap
+
+        # Standby / Stopped placeholder
+        if not is_running or active_cap is None or not active_cap.isOpened():
+            placeholder = np.zeros((cached_frame_height, cached_frame_width, 3), dtype=np.uint8)
+            text = "CAMERA STOPPED - STANDBY" if not is_running else "INITIALIZING CAMERA FEED..."
+            cv2.putText(placeholder, text, (max(20, int(cached_frame_width * 0.15)), int(cached_frame_height * 0.5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 255) if not is_running else (150, 150, 150), 2)
             _, buffer = cv2.imencode('.jpg', placeholder)
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            time.sleep(0.3)
+            time.sleep(0.2)
             continue
 
-        ret, frame = cap.read()
+        ret, frame = active_cap.read()
         if not ret:
             # Loop video files automatically
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            with lock:
+                if cap is not None and cap.isOpened():
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             time.sleep(0.033)
             continue
 
-        with lock:
-            current_roi = list(roi_polygon)
+        # Update cached dimensions
+        h, w = frame.shape[:2]
+        cached_frame_width = w
+        cached_frame_height = h
 
-        roi_tuples = [(int(p[0]), int(p[1])) for p in current_roi] if current_roi else None
-
-        annotated_frame, intrusion, crowd = surveillance.process_frame(frame, roi_polygon=roi_tuples)
+        # Process frame through surveillance engine
+        if surveillance:
+            annotated_frame, intrusion, crowd = surveillance.process_frame(frame)
+            latency = surveillance.last_latency_ms
+            cpu_pct = surveillance.last_cpu_percent
+            model_t = surveillance.model_type
+            obj_cnt = surveillance._last_object_count
+            living_cnt = surveillance._last_living_count
+        else:
+            annotated_frame = frame
+            intrusion = False
+            crowd = False
+            latency = 0.0
+            cpu_pct = 0.0
+            model_t = 'None'
+            obj_cnt = 0
+            living_cnt = 0
 
         curr_time = time.time()
         fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0.0
@@ -102,11 +179,15 @@ def generate_frames():
 
         with lock:
             frame_stats['fps'] = fps
-            frame_stats['latency_ms'] = surveillance.last_latency_ms
-            frame_stats['cpu_percent'] = surveillance.last_cpu_percent
+            frame_stats['latency_ms'] = latency
+            frame_stats['cpu_percent'] = cpu_pct
             frame_stats['intrusion_active'] = intrusion
             frame_stats['crowd_active'] = crowd
-            frame_stats['model_type'] = surveillance.model_type
+            frame_stats['model_type'] = model_t
+            frame_stats['object_count'] = obj_cnt
+            frame_stats['living_count'] = living_cnt
+            frame_stats['frame_width'] = w
+            frame_stats['frame_height'] = h
 
         # Encode to JPEG for browser MJPEG streaming
         _, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -126,27 +207,54 @@ def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+@app.route('/frame_size', methods=['GET'])
+def get_frame_size():
+    with lock:
+        return jsonify({
+            'width': cached_frame_width,
+            'height': cached_frame_height,
+            'camera_running': camera_running
+        })
+
+
+@app.route('/stop_camera', methods=['POST'])
+def handle_stop_camera():
+    stop_camera()
+    return jsonify({'status': 'ok', 'camera_running': False})
+
+
+@app.route('/start_camera', methods=['POST'])
+def handle_start_camera():
+    success = init_camera()
+    return jsonify({'status': 'ok' if success else 'error', 'camera_running': camera_running})
+
+
 @app.route('/set_roi', methods=['POST'])
 def set_roi():
-    global roi_polygon
-    data = request.get_json()
+    data = request.get_json() or {}
     points = data.get('points', [])
-    with lock:
-        roi_polygon = points
+    zone_id = data.get('zone_id', 'zone_1')
+    zone_name = data.get('zone_name', 'Red Zone 1')
+
+    if len(points) < 3:
+        return jsonify({'status': 'error', 'message': 'At least 3 points required for a polygon'}), 400
+
     if surveillance:
-        surveillance.reset_roi_tracking()
-    print(f"[ROI] Defined Red Zone polygon with {len(points)} nodes: {points}")
-    return jsonify({'status': 'ok', 'points': len(points)})
+        surveillance.set_zone(zone_id=zone_id, zone_name=zone_name, points=points)
+
+    print(f"[ROI] Configured '{zone_name}' ({zone_id}) with {len(points)} nodes: {points}")
+    return jsonify({'status': 'ok', 'points': len(points), 'zone_id': zone_id, 'zone_name': zone_name})
 
 
 @app.route('/clear_roi', methods=['POST'])
 def clear_roi():
-    global roi_polygon
-    with lock:
-        roi_polygon = []
+    data = request.get_json(silent=True) or {}
+    zone_id = data.get('zone_id', None)
+
     if surveillance:
-        surveillance.reset_roi_tracking()
-    print("[ROI] Cleared")
+        surveillance.clear_zone(zone_id=zone_id)
+
+    print(f"[ROI] Cleared {'zone ' + zone_id if zone_id else 'all zones'}")
     return jsonify({'status': 'ok'})
 
 
@@ -156,7 +264,7 @@ def upload_file():
     global video_source
     if 'file' not in request.files:
         return jsonify({'status': 'error', 'message': 'No file uploaded'})
-    
+
     file = request.files['file']
     if file.filename == '':
         return jsonify({'status': 'error', 'message': 'No file selected'})
@@ -169,6 +277,7 @@ def upload_file():
     init_camera(video_source)
     if surveillance:
         surveillance.reset_roi_tracking()
+
     return jsonify({'status': 'ok', 'filename': filename, 'path': filepath})
 
 
@@ -179,10 +288,13 @@ def status():
 
     alerts = surveillance.recent_alerts if surveillance else []
     breach_history = surveillance.breach_history if surveillance else []
-    
+    zones_info = surveillance.get_zones_info() if surveillance else []
+
     stats['alerts'] = alerts
     stats['breach_history'] = breach_history
-    stats['total_breaches'] = len(breach_history)
+    stats['total_alerts_count'] = getattr(surveillance, 'total_alerts_count', len(alerts)) if surveillance else 0
+    stats['total_breaches'] = getattr(surveillance, 'total_alerts_count', len(breach_history)) if surveillance else 0
+    stats['zones'] = zones_info
     stats['object_count'] = getattr(surveillance, '_last_object_count', 0) if surveillance else 0
     stats['living_count'] = getattr(surveillance, '_last_living_count', 0) if surveillance else 0
 
@@ -193,6 +305,7 @@ def status():
 def clear_alerts():
     if surveillance:
         surveillance.recent_alerts = []
+        surveillance.breach_history = []
         surveillance.reset_roi_tracking()
     return jsonify({'status': 'ok'})
 
@@ -200,7 +313,7 @@ def clear_alerts():
 @app.route('/config', methods=['POST'])
 def config():
     global video_source
-    data = request.get_json()
+    data = request.get_json() or {}
 
     if 'crowd_threshold' in data:
         if surveillance:

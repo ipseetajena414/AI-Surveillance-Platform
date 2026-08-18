@@ -6,3 +6,7 @@ uploads/*
 alerts.log
 .venv/
 .vscode/
+*.mp4
+*.avi
+best_detr_*.pt
+.ipynb_checkpoints/

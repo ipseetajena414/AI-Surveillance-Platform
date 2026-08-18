@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Multi-Model AI Surveillance & Red Zone ID Tracking Platform with real-time breach logs.">
-    <title>AI Surveillance & Red Zone ID Tracking</title>
+    <meta name="description" content="AI Surveillance & Persistent Red Zone Overlap Monitoring Platform.">
+    <title>AI Surveillance & Red Zone Tracker</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
 </head>
@@ -16,7 +16,7 @@
             <div class="header-logo">📹</div>
             <div>
                 <div class="header-title">AI Surveillance & Red Zone Tracker</div>
-                <div class="header-subtitle">Real-Time Object ID Tracking &bull; YOLOv8 &amp; DETR</div>
+                <div class="header-subtitle">Real-Time Object ID Tracking &bull; Overlap Guardrails &bull; YOLOv8 &amp; DETR</div>
             </div>
         </div>
         <div class="header-right">
@@ -25,9 +25,9 @@
                 <span class="hstat"><span class="hstat-val" id="stat-latency">0.0</span> ms</span>
                 <span class="hstat"><span class="hstat-val" id="stat-cpu">0.0</span>% CPU</span>
             </div>
-            <div class="status-badge live" id="status-badge">
+            <div class="status-badge live" id="camera-status-badge">
                 <span class="status-dot"></span>
-                <span id="active-model-tag">YOLOv8 (CNN)</span>
+                <span id="camera-status-text">CAMERA LIVE</span>
             </div>
         </div>
     </header>
@@ -46,22 +46,33 @@
                 <canvas id="roi-canvas"></canvas>
             </div>
 
-            <!-- Compact Control Bar -->
+            <!-- Control Bar -->
             <div class="control-bar">
                 <div class="control-left">
-                    <button class="btn btn-primary" id="btn-lock-roi" onclick="lockROI()">🔒 Create Red Zone</button>
+                    <!-- Red Zone Workflow Buttons -->
+                    <button class="btn btn-redzone" id="btn-draw-roi" onclick="toggleDrawMode()">🔴 Red Zone</button>
+                    <button class="btn btn-success" id="btn-confirm-roi" style="display: none;" onclick="confirmROI()" disabled>✓ Create Red Zone</button>
+                    <button class="btn btn-danger btn-sm" id="btn-cancel-roi" style="display: none;" onclick="cancelDrawMode()">✕ Cancel</button>
+                    <button class="btn btn-sm" id="btn-undo-roi" style="display: none;" onclick="undoROI()">↩️ Undo</button>
                     <button class="btn btn-danger" id="btn-clear-roi" onclick="clearROI()">🗑️ Clear Zone</button>
-                    <button class="btn" id="btn-undo-roi" onclick="undoROI()">↩️ Undo Node</button>
+
+                    <!-- Camera Lifecycle Controls -->
+                    <button class="btn btn-stop" id="btn-stop-camera" onclick="stopCamera()">⏹ Stop</button>
+                    <button class="btn btn-start" id="btn-start-camera" style="display: none;" onclick="startCamera()">▶ Start Camera</button>
                 </div>
                 <div class="control-right">
                     <div class="roi-info">
                         <span class="roi-label">Nodes:</span>
                         <span class="roi-count" id="roi-count">0</span>
                     </div>
+                    <div class="object-stat">
+                        <span>Objects:</span>
+                        <span class="stat-num" id="stat-objects">0</span>
+                    </div>
                     <div class="breach-stat">
                         <span class="breach-icon">🚨</span>
                         <span class="breach-val" id="stat-total-breaches">0</span>
-                        <span class="breach-label">breaches</span>
+                        <span class="breach-label">alerts</span>
                     </div>
                 </div>
             </div>
@@ -70,32 +81,32 @@
         <!-- === RIGHT: Sidebar === -->
         <div class="sidebar">
 
-            <!-- Breach Registry (primary panel — fills space) -->
+            <!-- Live Alert Feed Panel -->
             <div class="panel panel-breach">
                 <div class="panel-header">
-                    <span class="panel-title">🚨 Red Zone Breach Log</span>
+                    <span class="panel-title">🚨 Live Red Zone Alerts</span>
                     <div class="panel-actions">
                         <span class="breach-count" id="breach-count-badge">0</span>
-                        <button class="btn-icon" onclick="clearAlerts()" title="Clear all breach logs">✕</button>
+                        <button class="btn-icon" onclick="clearAlerts()" title="Clear alert history">✕</button>
                     </div>
                 </div>
                 <div class="alert-feed" id="breach-history-feed">
                     <div class="no-alerts">
                         <div class="no-alerts-icon">🛡️</div>
-                        <div>No breaches recorded yet</div>
+                        <div>No red zone breaches detected</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Settings (collapsible single panel) -->
+            <!-- Settings Panel -->
             <div class="panel">
                 <div class="panel-header panel-toggle" onclick="togglePanel(this)">
-                    <span class="panel-title">⚙️ Settings</span>
+                    <span class="panel-title">⚙️ Control Settings</span>
                     <span class="panel-chevron">▼</span>
                 </div>
                 <div class="panel-body panel-collapsible">
                     <div class="config-row">
-                        <span class="config-label">Model</span>
+                        <span class="config-label">AI Model</span>
                         <select class="config-select" id="model-architecture" onchange="switchModelArchitecture()">
                             <option value="yolov8n.pt">YOLOv8 (CNN)</option>
                             <option value="facebook/detr-resnet-50">DETR (Transformer)</option>
@@ -104,19 +115,19 @@
                     <div class="config-row">
                         <span class="config-label">Input Source</span>
                         <select class="config-select" id="input-mode-select" onchange="handleInputModeChange()">
-                            <option value="webcam">🎥 Webcam</option>
-                            <option value="file">🎞️ Upload File</option>
+                            <option value="webcam">🎥 Live Webcam</option>
+                            <option value="file">🎞️ Video / Image File</option>
                         </select>
                     </div>
                     <div id="file-upload-section" style="display: none; padding: 8px 0 4px;">
                         <input type="file" id="media-file-input" accept="video/*,image/*" style="display: none;" onchange="uploadMediaFile()">
                         <button class="btn btn-primary btn-sm" style="width: 100%; justify-content: center;" onclick="document.getElementById('media-file-input').click()">
-                            📤 Select & Upload File
+                            📤 Select & Upload Media
                         </button>
                         <div id="upload-status" style="font-size: 0.7rem; margin-top: 6px; color: var(--text-muted); text-align: center;"></div>
                     </div>
                     <div class="config-row">
-                        <span class="config-label">Crowd Alert Limit</span>
+                        <span class="config-label">Crowd Alert Threshold</span>
                         <input type="number" class="config-input" id="crowd-threshold" value="3" min="1" max="50" onchange="updateSecurityConfig()">
                     </div>
                 </div>
@@ -126,177 +137,324 @@
     </div>
 
     <script>
-        let roiPoints = [];
-        let roiLocked = false;
-        let lastBreachCount = 0;
+        // ===== STATE VARIABLES =====
+        let isDrawingMode = false;
+        let drawingPoints = [];       // Array of { canvasX, canvasY, frameX, frameY }
+        let serverFrameWidth = 750;
+        let serverFrameHeight = 500;
+        let lastAlertCount = 0;
+        let isCameraRunning = true;
 
         const canvas = document.getElementById('roi-canvas');
         const ctx = canvas.getContext('2d');
         const videoFeed = document.getElementById('video-feed');
         const videoContainer = document.getElementById('video-container');
 
-        // ===== Canvas Resize =====
+        // ===== CANVAS SIZING & COORDINATE TRANSFORMATION =====
         function resizeCanvas() {
-            canvas.width = videoFeed.clientWidth;
-            canvas.height = videoFeed.clientHeight;
-            drawROI();
+            canvas.width = videoContainer.clientWidth;
+            canvas.height = videoContainer.clientHeight;
+            if (isDrawingMode) {
+                drawDrawingCanvas();
+            }
         }
 
-        videoFeed.addEventListener('load', resizeCanvas);
         window.addEventListener('resize', resizeCanvas);
-        setTimeout(resizeCanvas, 500);
-
-        // ===== ROI Drawing on Canvas =====
-        canvas.addEventListener('click', function(e) {
-            if (roiLocked) return;
-
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = (videoFeed.naturalWidth || canvas.width) / canvas.width;
-            const scaleY = (videoFeed.naturalHeight || canvas.height) / canvas.height;
-
-            const canvasX = e.clientX - rect.left;
-            const canvasY = e.clientY - rect.top;
-
-            const realX = Math.round(canvasX * scaleX);
-            const realY = Math.round(canvasY * scaleY);
-
-            roiPoints.push({ canvasX, canvasY, realX, realY });
-            drawROI();
-            updateROICount();
+        videoFeed.addEventListener('load', () => {
+            fetchFrameSize();
+            resizeCanvas();
         });
 
-        function drawROI() {
+        function fetchFrameSize() {
+            fetch('/frame_size')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.width && data.height) {
+                        serverFrameWidth = data.width;
+                        serverFrameHeight = data.height;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        // Precise object-fit: contain transformation
+        function getRenderedVideoMetrics() {
+            const containerW = videoContainer.clientWidth;
+            const containerH = videoContainer.clientHeight;
+            const naturalW = videoFeed.naturalWidth || serverFrameWidth || containerW;
+            const naturalH = videoFeed.naturalHeight || serverFrameHeight || containerH;
+
+            const containerAspect = containerW / containerH;
+            const videoAspect = naturalW / naturalH;
+
+            let renderW, renderH, offsetX, offsetY;
+
+            if (videoAspect > containerAspect) {
+                renderW = containerW;
+                renderH = containerW / videoAspect;
+                offsetX = 0;
+                offsetY = (containerH - renderH) / 2;
+            } else {
+                renderH = containerH;
+                renderW = containerH * videoAspect;
+                offsetX = (containerW - renderW) / 2;
+                offsetY = 0;
+            }
+
+            return { containerW, containerH, renderW, renderH, offsetX, offsetY, naturalW, naturalH };
+        }
+
+        function clickToFrameCoords(clientX, clientY) {
+            const rect = videoContainer.getBoundingClientRect();
+            const metrics = getRenderedVideoMetrics();
+
+            const clickX = clientX - rect.left;
+            const clickY = clientY - rect.top;
+
+            const relX = clickX - metrics.offsetX;
+            const relY = clickY - metrics.offsetY;
+
+            // Clamp within rendered image area
+            const clampedX = Math.max(0, Math.min(relX, metrics.renderW));
+            const clampedY = Math.max(0, Math.min(relY, metrics.renderH));
+
+            const frameX = Math.round((clampedX / metrics.renderW) * metrics.naturalW);
+            const frameY = Math.round((clampedY / metrics.renderH) * metrics.naturalH);
+
+            return { canvasX: clickX, canvasY: clickY, frameX, frameY };
+        }
+
+        // ===== RED ZONE DRAWING INTERACTION =====
+        canvas.addEventListener('click', function(e) {
+            if (!isDrawingMode) return;
+
+            const pt = clickToFrameCoords(e.clientX, e.clientY);
+            drawingPoints.push(pt);
+
+            updateDrawingUI();
+            drawDrawingCanvas();
+        });
+
+        function toggleDrawMode() {
+            if (isDrawingMode) {
+                cancelDrawMode();
+                return;
+            }
+            enterDrawMode();
+        }
+
+        function enterDrawMode() {
+            isDrawingMode = true;
+            drawingPoints = [];
+            resizeCanvas();
+
+            canvas.classList.add('drawing-mode');
+            videoContainer.classList.add('drawing-active');
+
+            const btnDraw = document.getElementById('btn-draw-roi');
+            btnDraw.textContent = '✏️ Drawing Red Zone';
+            btnDraw.classList.add('drawing');
+
+            document.getElementById('btn-confirm-roi').style.display = 'inline-flex';
+            document.getElementById('btn-cancel-roi').style.display = 'inline-flex';
+            document.getElementById('btn-undo-roi').style.display = 'inline-flex';
+            document.getElementById('btn-confirm-roi').disabled = true;
+
+            updateDrawingUI();
+            drawDrawingCanvas();
+        }
+
+        function cancelDrawMode() {
+            isDrawingMode = false;
+            drawingPoints = [];
+
+            canvas.classList.remove('drawing-mode');
+            videoContainer.classList.remove('drawing-active');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            if (roiPoints.length === 0 || roiLocked) return;
 
-            const scaleX = canvas.width / (videoFeed.naturalWidth || canvas.width);
-            const scaleY = canvas.height / (videoFeed.naturalHeight || canvas.height);
+            const btnDraw = document.getElementById('btn-draw-roi');
+            btnDraw.textContent = '🔴 Red Zone';
+            btnDraw.classList.remove('drawing');
 
-            // Fill polygon preview
-            if (roiPoints.length > 2) {
+            document.getElementById('btn-confirm-roi').style.display = 'none';
+            document.getElementById('btn-cancel-roi').style.display = 'none';
+            document.getElementById('btn-undo-roi').style.display = 'none';
+
+            updateDrawingUI();
+        }
+
+        function undoROI() {
+            if (!isDrawingMode || drawingPoints.length === 0) return;
+            drawingPoints.pop();
+            updateDrawingUI();
+            drawDrawingCanvas();
+        }
+
+        function updateDrawingUI() {
+            const count = drawingPoints.length;
+            document.getElementById('roi-count').textContent = count;
+            document.getElementById('btn-confirm-roi').disabled = (count < 3);
+        }
+
+        function drawDrawingCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (!isDrawingMode || drawingPoints.length === 0) return;
+
+            const metrics = getRenderedVideoMetrics();
+
+            // Calculate display canvas coordinates from frame coordinates
+            const displayPoints = drawingPoints.map(p => {
+                const px = metrics.offsetX + (p.frameX / metrics.naturalW) * metrics.renderW;
+                const py = metrics.offsetY + (p.frameY / metrics.naturalH) * metrics.renderH;
+                return { x: px, y: py };
+            });
+
+            // Draw semi-transparent fill preview if >= 3 points
+            if (displayPoints.length >= 3) {
                 ctx.beginPath();
-                ctx.moveTo(roiPoints[0].realX * scaleX, roiPoints[0].realY * scaleY);
-                for (let i = 1; i < roiPoints.length; i++) {
-                    ctx.lineTo(roiPoints[i].realX * scaleX, roiPoints[i].realY * scaleY);
+                ctx.moveTo(displayPoints[0].x, displayPoints[0].y);
+                for (let i = 1; i < displayPoints.length; i++) {
+                    ctx.lineTo(displayPoints[i].x, displayPoints[i].y);
                 }
                 ctx.closePath();
-                ctx.fillStyle = 'rgba(99, 102, 241, 0.12)';
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
                 ctx.fill();
             }
 
-            // Stroke outline
+            // Draw red polygon outline
             ctx.beginPath();
-            ctx.moveTo(roiPoints[0].realX * scaleX, roiPoints[0].realY * scaleY);
-            for (let i = 1; i < roiPoints.length; i++) {
-                ctx.lineTo(roiPoints[i].realX * scaleX, roiPoints[i].realY * scaleY);
+            ctx.moveTo(displayPoints[0].x, displayPoints[0].y);
+            for (let i = 1; i < displayPoints.length; i++) {
+                ctx.lineTo(displayPoints[i].x, displayPoints[i].y);
             }
-            if (roiPoints.length > 2) ctx.closePath();
-            ctx.strokeStyle = '#6366f1';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([6, 4]);
+            if (displayPoints.length >= 3) {
+                ctx.closePath();
+            }
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2.5;
             ctx.stroke();
-            ctx.setLineDash([]);
 
-            // Draw nodes
-            roiPoints.forEach((pt, i) => {
-                const px = pt.realX * scaleX;
-                const py = pt.realY * scaleY;
+            // Draw polygon vertices/nodes
+            displayPoints.forEach((pt, i) => {
                 ctx.beginPath();
-                ctx.arc(px, py, 5, 0, Math.PI * 2);
-                ctx.fillStyle = '#818cf8';
+                ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+                ctx.fillStyle = '#ef4444';
                 ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
                 ctx.stroke();
 
-                ctx.fillStyle = '#fff';
-                ctx.font = '10px JetBrains Mono, monospace';
-                ctx.fillText(`${i + 1}`, px + 7, py - 5);
+                // Node index number
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 11px JetBrains Mono, monospace';
+                ctx.fillText(`${i + 1}`, pt.x + 8, pt.y - 6);
             });
         }
 
-        function updateROICount() {
-            document.getElementById('roi-count').textContent = roiPoints.length;
-        }
-
-        // ===== LOCK ROI — sends to backend, then HIDES canvas overlay so live video feed is active =====
-        function lockROI() {
-            if (roiPoints.length < 3) {
+        // ===== CONFIRM & CREATE RED ZONE =====
+        function confirmROI() {
+            if (drawingPoints.length < 3) {
                 alert('Click at least 3 points on the video to form a Red Zone.');
                 return;
             }
-            roiLocked = true;
-            const points = roiPoints.map(p => [p.realX, p.realY]);
+
+            const points = drawingPoints.map(p => [p.frameX, p.frameY]);
 
             fetch('/set_roi', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ points: points })
-            }).then(r => r.json()).then(data => {
-                // Clear the static canvas drawing & hide canvas layer
-                // The backend now draws the red zone directly onto the live video frames
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                canvas.classList.add('locked');
+                body: JSON.stringify({
+                    points: points,
+                    zone_id: 'zone_1',
+                    zone_name: 'Red Zone 1'
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                cancelDrawMode();
+                const btnDraw = document.getElementById('btn-draw-roi');
+                btnDraw.textContent = '🔴 Red Zone Active';
             });
-
-            document.getElementById('btn-lock-roi').textContent = '🔒 Zone Active';
-            document.getElementById('btn-lock-roi').disabled = true;
         }
 
-        // ===== CLEAR ROI — restores canvas for drawing again =====
+        // ===== CLEAR RED ZONE =====
         function clearROI() {
-            roiPoints = [];
-            roiLocked = false;
-
-            // Restore canvas interaction
-            canvas.classList.remove('locked');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            fetch('/clear_roi', { method: 'POST' });
-            updateROICount();
-
-            document.getElementById('btn-lock-roi').textContent = '🔒 Create Red Zone';
-            document.getElementById('btn-lock-roi').disabled = false;
-            document.getElementById('breach-history-feed').innerHTML = `
-                <div class="no-alerts">
-                    <div class="no-alerts-icon">🛡️</div>
-                    <div>No breaches recorded yet</div>
-                </div>`;
-            document.getElementById('stat-total-breaches').textContent = '0';
-            document.getElementById('breach-count-badge').textContent = '0';
-            lastBreachCount = 0;
-            videoContainer.classList.remove('alert-active');
+            cancelDrawMode();
+            fetch('/clear_roi', { method: 'POST' })
+                .then(r => r.json())
+                .then(() => {
+                    document.getElementById('roi-count').textContent = '0';
+                    const btnDraw = document.getElementById('btn-draw-roi');
+                    btnDraw.textContent = '🔴 Red Zone';
+                });
         }
 
-        function undoROI() {
-            if (roiLocked || roiPoints.length === 0) return;
-            roiPoints.pop();
-            drawROI();
-            updateROICount();
+        // ===== CAMERA LIFECYCLE CONTROLS =====
+        function stopCamera() {
+            fetch('/stop_camera', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isCameraRunning = false;
+                    updateCameraUIState(false);
+                });
         }
 
+        function startCamera() {
+            fetch('/start_camera', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isCameraRunning = true;
+                    updateCameraUIState(true);
+                    fetchFrameSize();
+                });
+        }
+
+        function updateCameraUIState(running) {
+            const badge = document.getElementById('camera-status-badge');
+            const badgeText = document.getElementById('camera-status-text');
+            const btnStop = document.getElementById('btn-stop-camera');
+            const btnStart = document.getElementById('btn-start-camera');
+            const feedLabel = document.getElementById('feed-label');
+
+            if (running) {
+                badge.className = 'status-badge live';
+                badgeText.textContent = 'CAMERA LIVE';
+                btnStop.style.display = 'inline-flex';
+                btnStart.style.display = 'none';
+                feedLabel.className = 'video-label';
+                feedLabel.textContent = '📷 Live Stream';
+            } else {
+                badge.className = 'status-badge stopped';
+                badgeText.textContent = 'CAMERA STOPPED';
+                btnStop.style.display = 'none';
+                btnStart.style.display = 'inline-flex';
+                feedLabel.className = 'video-label stopped';
+                feedLabel.textContent = '🛑 Camera Stopped';
+            }
+        }
+
+        // ===== CLEAR ALERTS =====
         function clearAlerts() {
             fetch('/clear_alerts', { method: 'POST' }).then(() => {
                 document.getElementById('breach-history-feed').innerHTML = `
                     <div class="no-alerts">
                         <div class="no-alerts-icon">🛡️</div>
-                        <div>No breaches recorded yet</div>
+                        <div>No red zone breaches detected</div>
                     </div>`;
                 document.getElementById('stat-total-breaches').textContent = '0';
                 document.getElementById('breach-count-badge').textContent = '0';
-                lastBreachCount = 0;
+                lastAlertCount = 0;
                 videoContainer.classList.remove('alert-active');
             });
         }
 
-        // ===== Settings Panel Toggle =====
+        // ===== SETTINGS CONTROLS =====
         function togglePanel(header) {
             header.classList.toggle('collapsed');
             const body = header.nextElementSibling;
             body.classList.toggle('collapsed');
         }
 
-        // ===== Config Functions =====
         function switchModelArchitecture() {
             const selectedModel = document.getElementById('model-architecture').value;
             fetch('/config', {
@@ -350,46 +508,68 @@
                 if (data.status === 'ok') {
                     statusDiv.textContent = `✅ ${data.filename}`;
                     document.getElementById('feed-label').textContent = `🎞️ ${data.filename}`;
+                    fetchFrameSize();
                 } else {
                     statusDiv.textContent = `❌ ${data.message}`;
                 }
             });
         }
 
-        // ===== Status Polling =====
+        // ===== STATUS POLLING =====
         function pollStatus() {
             fetch('/status')
                 .then(r => r.json())
                 .then(data => {
-                    document.getElementById('stat-fps').textContent = data.fps.toFixed(1);
-                    document.getElementById('stat-latency').textContent = data.latency_ms.toFixed(0);
-                    document.getElementById('stat-cpu').textContent = data.cpu_percent.toFixed(0);
+                    document.getElementById('stat-fps').textContent = (data.fps || 0.0).toFixed(1);
+                    document.getElementById('stat-latency').textContent = (data.latency_ms || 0.0).toFixed(0);
+                    document.getElementById('stat-cpu').textContent = (data.cpu_percent || 0.0).toFixed(0);
+                    document.getElementById('stat-objects').textContent = data.object_count || 0;
                     document.getElementById('stat-total-breaches').textContent = data.total_breaches || 0;
                     document.getElementById('breach-count-badge').textContent = data.total_breaches || 0;
-                    document.getElementById('active-model-tag').textContent = data.model_type || 'YOLOv8 (CNN)';
 
-                    // Render breach history with vehicle/living ID and exact timestamp
-                    if (data.breach_history && data.breach_history.length > 0) {
-                        if (data.breach_history.length !== lastBreachCount) {
-                            lastBreachCount = data.breach_history.length;
+                    if (data.camera_running !== undefined && data.camera_running !== isCameraRunning) {
+                        isCameraRunning = data.camera_running;
+                        updateCameraUIState(isCameraRunning);
+                    }
 
-                            let html = '';
-                            [...data.breach_history].reverse().forEach(item => {
-                                const isVehicle = item.category === 'Vehicle';
-                                const icon = isVehicle ? '🚗' : '🧑';
-                                const badgeClass = isVehicle ? 'intrusion' : 'crowd';
+                    if (data.frame_width && data.frame_height) {
+                        serverFrameWidth = data.frame_width;
+                        serverFrameHeight = data.frame_height;
+                    }
 
-                                html += `<div class="alert-item ${badgeClass}">
-                                    <span style="font-size: 1rem;">${icon}</span>
-                                    <div class="alert-msg">
-                                        <strong>${item.id}</strong>
-                                        <span>Crossed Red Zone (${item.category})</span>
-                                    </div>
-                                    <span class="alert-time">${item.time}</span>
-                                </div>`;
-                            });
-                            document.getElementById('breach-history-feed').innerHTML = html;
-                        }
+                    // Render live alert items
+                    const alerts = data.alerts || [];
+                    const totalAlerts = data.total_alerts_count !== undefined ? data.total_alerts_count : (data.total_breaches || alerts.length);
+                    const newestAlert = alerts.length > 0 ? alerts[alerts.length - 1] : null;
+                    const newestAlertKey = newestAlert ? (newestAlert.id || (newestAlert.timestamp + newestAlert.object_id + newestAlert.event)) : null;
+
+                    if (alerts.length > 0 && newestAlertKey !== lastAlertCount) {
+                        lastAlertCount = newestAlertKey;
+
+                        let html = '';
+                        [...alerts].reverse().slice(0, 50).forEach(item => {
+                            const isExit = item.event === 'EXIT';
+                            const icon = isExit ? '✅' : '🚨';
+                            const itemClass = isExit ? 'exit' : (item.event === 'ENTER' ? 'enter' : 'inside');
+                            const overlapText = item.overlap_percent !== undefined ? `${item.overlap_percent}%` : '';
+
+                            html += `<div class="alert-item ${itemClass}">
+                                <span style="font-size: 1rem;">${icon}</span>
+                                <div class="alert-msg">
+                                    <strong>${item.display_id || item.class}</strong>
+                                    <span class="alert-sub">${item.event || 'BREACH'} &bull; ${item.zone_name || 'Red Zone'} &bull; Overlap: ${overlapText}</span>
+                                </div>
+                                <span class="alert-time">${item.timestamp || item.time}</span>
+                            </div>`;
+                        });
+                        document.getElementById('breach-history-feed').innerHTML = html;
+                    } else if (alerts.length === 0) {
+                        document.getElementById('breach-history-feed').innerHTML = `
+                            <div class="no-alerts">
+                                <div class="no-alerts-icon">🛡️</div>
+                                <div>No red zone breaches detected</div>
+                            </div>`;
+                        lastAlertCount = null;
                     }
 
                     if (data.intrusion_active || data.crowd_active) {
@@ -397,7 +577,8 @@
                     } else {
                         videoContainer.classList.remove('alert-active');
                     }
-                });
+                })
+                .catch(() => {});
         }
 
         setInterval(pollStatus, 500);
@@ -408,6 +589,9 @@
         }
         setInterval(updateClock, 1000);
         updateClock();
+
+        // Initial setup
+        fetchFrameSize();
     </script>
 </body>
 </html>
